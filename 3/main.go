@@ -14,13 +14,19 @@ type point struct {
 	y int
 }
 
+type intersection struct {
+	point
+	dist int
+}
+
 func (p point) Dist() int {
 	return abs(p.x) + abs(p.y)
 }
 
 type seg struct {
-	a point
-	b point
+	a   point
+	b   point
+	len int
 }
 
 func (s seg) Slope() int {
@@ -52,7 +58,8 @@ func pathToSeg(path []string) ([]seg, error) {
 			return nil, err
 		}
 		s := seg{
-			a: point{x,y},
+			a:   point{x, y},
+			len: l,
 		}
 
 		switch dir {
@@ -105,35 +112,40 @@ func main() {
 		panic("didn't find 2 wires")
 	}
 
-	var intersections []point
+	if wires == nil {
+		panic("no wires")
+	}
+
+	var intersections []intersection
+	w1d := 0
 	for _, s1 := range wires[0] {
+		w2d := 0
 		for _, s2 := range wires[1] {
+			baseLen := w1d + w2d
 			sl1 := s1.Slope()
 			sl2 := s2.Slope()
 
 			if sl1 == sl2 {
 				if sl1 == 0 && s1.a.y == s2.a.y {
-					minx1 := min(s1.a.x, s1.b.x)
-					minx2 := min(s2.a.x, s2.b.x)
-					maxminx := max(minx1, minx2)
-					maxx1 := max(s1.a.x, s1.b.x)
-					maxx2 := max(s2.a.x, s2.b.x)
-					minmaxx := min(maxx1, maxx2)
+					s1n := s1.Normalized()
+					s2n := s2.Normalized()
+					maxminx := max(s1n.a.x, s2n.a.x)
+					minmaxx := min(s1n.b.x, s2n.b.x)
 
 					for i := maxminx; i <= minmaxx; i++ {
-						i := point{i, s1.a.y}
+						length := baseLen + (i - maxminx) + (s1.a.y - s2n.a.y)
+						i := intersection{point{i, s1.a.y}, length}
 						intersections = append(intersections, i)
 					}
 				} else if sl1 == 1 && s1.a.x == s2.a.x {
-					miny1 := min(s1.a.y, s1.b.y)
-					miny2 := min(s2.a.y, s2.b.y)
-					maxminy := max(miny1, miny2)
-					maxy1 := max(s1.a.y, s1.b.y)
-					maxy2 := max(s2.a.y, s2.b.y)
-					minmaxy := min(maxy1, maxy2)
+					s1n := s1.Normalized()
+					s2n := s2.Normalized()
+					maxminy := max(s1n.a.y, s2n.a.y)
+					minmaxy := min(s1n.b.y, s2n.b.y)
 
 					for i := maxminy; i <= minmaxy; i++ {
-						i := point{s1.a.x, i}
+						length := baseLen + (i - maxminy) + (s1.a.x - s2n.a.x)
+						i := intersection{point{s1.a.x, i}, length}
 						intersections = append(intersections, i)
 					}
 				}
@@ -144,7 +156,11 @@ func main() {
 
 				if s2.a.x <= s1n.b.x && s2.a.x >= s1n.a.x &&
 					s1.a.y <= s2n.b.y && s1.a.y >= s2n.a.y {
-					intersections = append(intersections, point{s2.a.x, s1.a.y})
+					s1d := abs(s1.a.x - s2.a.x)
+					s2d := abs(s1.a.y - s2.a.y)
+					length := baseLen + s1d + s2d
+					intersect := intersection{point{s2.a.x, s1.a.y}, length}
+					intersections = append(intersections, intersect)
 				}
 			} else {
 				s1n := s1.Normalized()
@@ -152,28 +168,34 @@ func main() {
 
 				if s2.a.y <= s1n.b.y && s2.a.y >= s1n.a.y &&
 					s1.a.x <= s2n.b.x && s1.b.x >= s2n.a.x {
-					intersections = append(intersections, point{s1.a.x, s2.a.y})
+					s1d := abs(s1.a.x - s2.a.x)
+					s2d := abs(s2.a.y - s1.a.y)
+					length := baseLen + s1d + s2d
+					intersect := intersection{point{s1.a.x, s2.a.y}, length}
+					intersections = append(intersections, intersect)
 				}
 			}
+			w2d += s2.len
 		}
+		w1d += s1.len
 	}
 
-	minDist := math.MaxInt64
+	minLength := math.MaxInt64
 	var minPt point
 	for _, intersect := range intersections {
-		if intersect == (point{}) {
+		if intersect.point == (point{}) {
 			continue
 		}
 
-		dist := intersect.Dist()
-		if dist < minDist {
-			minDist = dist
-			minPt = intersect
+		length := intersect.dist
+		if length < minLength {
+			minLength = length
+			minPt = intersect.point
 		}
 	}
 
 	if minPt != (point{}) {
-		fmt.Printf("found min intersection: %+v: %d\n", minPt, minPt.Dist())
+		fmt.Printf("found min intersection: %+v: %d\n", minPt, minLength)
 	} else {
 		fmt.Println("could not find min intersection")
 	}
