@@ -152,10 +152,10 @@ func (c *IntcodeComputer) read() int {
 	return rv
 }
 
-func addOp(a, b int) int  { return a + b }
-func multOp(a, b int) int { return a * b }
-func trueCmp(a int) bool  { return a != 0 }
-func falseCmp(a int) bool { return a == 0 }
+func addOp(a, b int) int      { return a + b }
+func multOp(a, b int) int     { return a * b }
+func trueCmp(a int) bool      { return a != 0 }
+func falseCmp(a int) bool     { return a == 0 }
 func ltCmp(a int, b int) bool { return a < b }
 func eqCmp(a int, b int) bool { return a == b }
 
