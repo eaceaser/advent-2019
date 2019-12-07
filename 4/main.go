@@ -9,17 +9,27 @@ import (
 
 func checkPw(pw [6]int) bool {
 	adjFound := false
+	pairFound := false
 	for i := 1; i < 6; i++ {
 		a := pw[i-1]
 		b := pw[i]
-		if a == b {
-			adjFound = true
-		}
 		if b < a {
 			return false
 		}
+
+		if a == b && !pairFound {
+			adjFound = true
+			if i > 1 {
+				c := pw[i-2]
+				if c == a && c == b {
+					adjFound = false
+				}
+			}
+		} else if adjFound {
+			pairFound = true
+		}
 	}
-	return adjFound
+	return adjFound || pairFound
 }
 
 func pwToArr(pw int) [6]int {
