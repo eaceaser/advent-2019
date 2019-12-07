@@ -6,17 +6,21 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
-	OpcodeAdd      = 1
-	OpcodeMultiply = 2
-	OpcodeInput    = 3
-	OpcodeOutput   = 4
-	OpcodeDie      = 99
-
-	ModePosition  int = 0
-	ModeImmediate int = 1
+	OpcodeAdd          = 1
+	OpcodeMultiply     = 2
+	OpcodeInput        = 3
+	OpcodeOutput       = 4
+	OpcodeJmpIfT       = 5
+	OpcodeJmpIfF       = 6
+	OpcodeLT           = 7
+	OpcodeEql          = 8
+	OpcodeDie          = 99
+	ModePosition   int = 0
+	ModeImmediate  int = 1
 )
 
 type IntcodeComputer struct {
@@ -24,7 +28,20 @@ type IntcodeComputer struct {
 	ip     int
 	input  <-chan int
 	output chan<- int
-	halt chan<- struct{}
+	halt   chan<- struct{}
+}
+
+func (c *IntcodeComputer) jumpImpl(modes []int, cmp func(p int) bool) error {
+	params, err := c.modalParams(pad(modes, 2)...)
+	if err != nil {
+		return err
+	}
+
+	if cmp(params[0]) {
+		c.ip = params[1]
+	}
+
+	return nil
 }
 
 func (c *IntcodeComputer) inputImpl() {
@@ -53,7 +70,6 @@ func (c *IntcodeComputer) modalParams(mode ...int) ([]int, error) {
 			rv[i] = p
 		default:
 			return nil, fmt.Errorf("unknown mode %d", t)
-
 		}
 	}
 	return rv, nil
@@ -67,6 +83,21 @@ func (c *IntcodeComputer) arithmeticImpl(parsedModes []int, f func(a, b int) int
 	}
 	dest := c.read()
 	c.mem[dest] = f(params[0], params[1])
+	return nil
+}
+
+func (c *IntcodeComputer) cmpImpl(parsedModes []int, f func(a, b int) bool) error {
+	modes := pad(parsedModes, 2)
+	params, err := c.modalParams(modes...)
+	if err != nil {
+		return err
+	}
+	dest := c.read()
+	if f(params[0], params[1]) {
+		c.mem[dest] = 1
+	} else {
+		c.mem[dest] = 0
+	}
 	return nil
 }
 
@@ -90,6 +121,22 @@ func (c *IntcodeComputer) Run() error {
 			if err := c.outputImpl(parsedModes); err != nil {
 				return err
 			}
+		case OpcodeJmpIfT:
+			if err := c.jumpImpl(parsedModes, trueCmp); err != nil {
+				return err
+			}
+		case OpcodeJmpIfF:
+			if err := c.jumpImpl(parsedModes, falseCmp); err != nil {
+				return err
+			}
+		case OpcodeLT:
+			if err := c.cmpImpl(parsedModes, ltCmp); err != nil {
+				return err
+			}
+		case OpcodeEql:
+			if err := c.cmpImpl(parsedModes, eqCmp); err != nil {
+				return err
+			}
 		case OpcodeDie:
 			close(c.halt)
 			return nil
@@ -107,6 +154,10 @@ func (c *IntcodeComputer) read() int {
 
 func addOp(a, b int) int  { return a + b }
 func multOp(a, b int) int { return a * b }
+func trueCmp(a int) bool  { return a != 0 }
+func falseCmp(a int) bool { return a == 0 }
+func ltCmp(a int, b int) bool { return a < b }
+func eqCmp(a int, b int) bool { return a == b }
 
 func parseOpcode(code int) (opcode int, modes []int) {
 	opcode = code % 100
@@ -152,8 +203,12 @@ func main() {
 	output := make(chan int)
 	halt := make(chan struct{})
 
+	wg := sync.WaitGroup{}
+	wg.Add(3)
+
 	go func() {
-		input <- 1
+		input <- 5
+		wg.Done()
 	}()
 
 	go func() {
@@ -163,9 +218,9 @@ func main() {
 				fmt.Printf("[OUT] %d\n", o)
 			case <-halt:
 				fmt.Println("[DONE]")
+				wg.Done()
 				return
 			}
-
 		}
 	}()
 
@@ -174,11 +229,16 @@ func main() {
 		ip:     0,
 		input:  input,
 		output: output,
-		halt: halt,
+		halt:   halt,
 	}
 
-	err = c.Run()
-	if err != nil {
-		panic(err)
-	}
+	go func() {
+		err = c.Run()
+		if err != nil {
+			panic(err)
+		}
+		wg.Done()
+	}()
+
+	wg.Wait()
 }
