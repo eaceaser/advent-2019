@@ -17,15 +17,6 @@ type object struct {
 
 var objects = make(map[string]*object, 0)
 
-// le lazy
-func triangle(num int) int {
-	rv := 0
-	for i := num; i > 0; i-- {
-		rv += i
-	}
-	return rv
-}
-
 func countOrbits(head *object) int {
 	visited := map[string]struct{}{}
 
