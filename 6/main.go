@@ -7,7 +7,11 @@ import (
 	"strings"
 )
 
-const COM = "COM"
+const (
+	COM = "COM"
+	YOU = "YOU"
+	SAN = "SAN"
+)
 
 type object struct {
 	name     string
@@ -17,22 +21,31 @@ type object struct {
 
 var objects = make(map[string]*object, 0)
 
-func countOrbits(head *object) int {
+func countTransfers(from *object, to *object) int {
 	visited := map[string]struct{}{}
 
 	var f func(*object, int) int
 	f = func(obj *object, depth int) int {
-		rv := depth
-		for _, o := range obj.orbiters {
+		toOrbit := append(obj.orbits, obj.orbiters...)
+		for _, o := range toOrbit {
 			if _, ok := visited[o.name]; ok {
 				continue
 			}
-			rv += f(o, depth+1)
+			visited[o.name] = struct{}{}
+
+			if o.name == to.name {
+				return depth - 1
+			}
+
+			rv := f(o, depth+1)
+			if rv != 0 {
+				return rv
+			}
 		}
-		return rv
+		return 0
 	}
 
-	return f(head, 0)
+	return f(from, 0)
 }
 
 func main() {
@@ -74,11 +87,16 @@ func main() {
 		orbiter.orbits = append(orbiter.orbits, orbitee)
 	}
 
-	com, ok := objects[COM]
+	you, ok := objects[YOU]
 	if !ok {
-		panic("could not find COM")
+		panic("could not find YOU")
 	}
 
-	orbits := countOrbits(com)
-	fmt.Printf("found %d orbits\n", orbits)
+	san, ok := objects[SAN]
+	if !ok {
+		panic("could not find SAN")
+	}
+
+	cnt := countTransfers(you, san)
+	fmt.Printf("found %d transfers between %s and %s\n", cnt, you.name, san.name)
 }
