@@ -3,13 +3,41 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
-	"math"
 )
 
 const (
-	Width  = 25
-	Height = 6
+	Width       = 25
+	Height      = 6
+	Black       = byte('0')
+	White       = byte('1')
+	Transparent = byte('2')
 )
+
+func coord(x, y int) int {
+	return y*Width + x%Width
+}
+
+func printImage(image []byte) {
+	for y := 0; y < Height; y++ {
+		for x := 0; x < Width; x++ {
+			pixel := image[coord(x, y)]
+			var char rune
+			switch pixel {
+			case Black:
+				char = '.'
+			case White:
+				char = 'X'
+			case Transparent:
+				char = ' '
+			default:
+				panic("unknown pixel found")
+			}
+
+			fmt.Printf(" %c ", char)
+		}
+		fmt.Print("\n")
+	}
+}
 
 func main() {
 	raw, err := ioutil.ReadFile("input")
@@ -17,32 +45,37 @@ func main() {
 		panic(err)
 	}
 
-	var layers []map[int]int
+	var layers [][]byte
 
 	pos := 0
 	for pos < len(raw)-1 {
-		layer := map[int]int{}
+		layer := make([]byte, Width*Height)
 		for y := 0; y < Height; y++ {
-			for j := 0; j < Width; j++ {
-				digitS := raw[pos]
-				digit := int(digitS - '0')
-				layer[digit] += 1
+			for x := 0; x < Width; x++ {
+				pixel := raw[pos]
+				layer[coord(x, y)] = pixel
 				pos++
 			}
 		}
 		layers = append(layers, layer)
 	}
 
-	min0 := math.MaxInt64
-	var minL int
-	var ans int
-	for i, layer := range layers {
-		if layer[0] < min0 {
-			min0 = layer[0]
-			minL = i
-			ans = layer[1] * layer[2]
+	image := make([]byte, Width*Height)
+	for _, layer := range layers {
+		for y := 0; y < Height; y++ {
+			for x := 0; x < Width; x++ {
+				pos := coord(x, y)
+				pixel := layer[pos]
+				curr := image[pos]
+
+				if curr == White || curr == Black {
+					continue
+				}
+				image[pos] = pixel
+			}
 		}
 	}
 
-	fmt.Printf("layer %d has minimal zeros (%d). ans=%d\n", minL, min0, ans)
+	printImage(image)
+
 }
