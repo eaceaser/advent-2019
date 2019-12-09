@@ -28,7 +28,7 @@ func main() {
 	}
 
 	input := make(chan int, 1)
-	input <- 1
+	input <- 2
 	output := make(chan int)
 	c := intcodeComputer{
 		mem:    mem,
