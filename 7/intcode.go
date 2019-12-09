@@ -131,7 +131,6 @@ func (c *intcodeComputer) Run() error {
 				return err
 			}
 		case opcodeDie:
-			//close(c.output)
 			return nil
 		default:
 			return fmt.Errorf("illegal opcode %d", opcode)

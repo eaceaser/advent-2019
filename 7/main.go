@@ -13,40 +13,42 @@ const (
 	numAmplifiers = 5
 )
 
-var inputs = [numAmplifiers]int{0, 1, 2, 3, 4}
+var inputs = [numAmplifiers]int{5, 6, 7, 8, 9}
+
+type relay struct {
+	in   <-chan int
+	out  chan<- int
+	halt <-chan struct{}
+	last int
+}
+
+func (r *relay) run() {
+	for {
+		select {
+		case m := <-r.in:
+			r.last = m
+			r.out <- m
+		case <-r.halt:
+			return
+		}
+	}
+}
 
 type amplifier struct {
-	phase    int
 	computer *intcodeComputer
 	in       chan<- int
 	out      <-chan int
 	recv     <-chan int
 }
 
-func (a *amplifier) run() {
-	halt := make(chan struct{})
-	go func() {
-		a.in <- a.phase
-		for {
-			select {
-			case r := <-a.recv:
-				a.in <- r
-			case <-halt:
-				return
-			}
-		}
-	}()
-
+func (a *amplifier) run() error {
 	err := a.computer.Run()
-	halt <- struct{}{}
-	if err != nil {
-		panic(err)
-	}
+	return err
 }
 
-func mkAmplifier(name string, mem []int, phase int) *amplifier {
-	input := make(chan int)
-	output := make(chan int)
+func mkAmplifier(name string, mem []int) *amplifier {
+	input := make(chan int, 1)
+	output := make(chan int, 1)
 
 	c := &intcodeComputer{
 		name:   name,
@@ -56,71 +58,77 @@ func mkAmplifier(name string, mem []int, phase int) *amplifier {
 	}
 
 	return &amplifier{
-		phase:    phase,
 		computer: c,
 		in:       input,
 		out:      output,
 	}
 }
 
-func run(mem []int, phases []int) int {
-	var rv int
+func tune(phases []int, amps []*amplifier) {
+	for i, phase := range phases {
+		amps[i].in <- phase
+	}
+}
 
-	input := make(chan int)
-	finalHalt := make(chan struct{})
-	amps := [numAmplifiers]*amplifier{}
+func run(mem []int, phases []int) int {
+	amps := make([]*amplifier, numAmplifiers)
 
 	for i := 0; i < numAmplifiers; i++ {
 		cmem := make([]int, len(mem))
 		copy(cmem, mem)
 		name := fmt.Sprintf("amp:%d", i)
-		amp := mkAmplifier(name, cmem, phases[i])
+		amp := mkAmplifier(name, cmem)
 		amps[i] = amp
 	}
 
-	first := amps[0]
-	first.recv = input
-	for i := 1; i < numAmplifiers; i++ {
-		amps[i].recv = amps[i-1].out
-	}
-	last := amps[len(amps)-1]
-	output := last.out
-
 	ampWait := sync.WaitGroup{}
-	ampWait.Add(1)
-	go func() {
-		input <- 0
-		ampWait.Done()
-	}()
-
-	finalWait := sync.WaitGroup{}
-	finalWait.Add(1)
-
-	go func() {
-		for {
-			select {
-			case o := <-output:
-				rv = o
-			case <-finalHalt:
-				finalWait.Done()
-				return
-			}
-		}
-	}()
-
+	ampWait.Add(len(amps))
 	for _, a := range amps {
-		ampWait.Add(1)
 		go func(a1 *amplifier) {
-			a1.run()
+			if err := a1.run(); err != nil {
+				panic(err)
+			}
 			ampWait.Done()
 		}(a)
 	}
 
-	ampWait.Wait()
-	finalHalt <- struct{}{}
-	finalWait.Wait()
+	tune(phases, amps)
+	amps[0].in <- 0
 
-	return rv
+	var relayHalts []chan<- struct{}
+	for i := 1; i < len(amps); i++ {
+		halt := make(chan struct{})
+		relay := relay{
+			in:   amps[i-1].out,
+			out:  amps[i].in,
+			halt: halt,
+		}
+
+		go func() {
+			relay.run()
+		}()
+
+		relayHalts = append(relayHalts, halt)
+	}
+
+	feedbackHalt := make(chan struct{})
+	feedbackRelay := relay{
+		in:   amps[len(amps)-1].out,
+		out:  amps[0].in,
+		halt: feedbackHalt,
+	}
+	go func() {
+		feedbackRelay.run()
+	}()
+	relayHalts = append(relayHalts, feedbackHalt)
+
+	ampWait.Wait()
+
+	for _, halt := range relayHalts {
+		halt <- struct{}{}
+	}
+
+	return feedbackRelay.last
 }
 
 func permutations(in []int) [][]int {
