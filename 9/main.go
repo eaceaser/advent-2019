@@ -43,6 +43,7 @@ func main() {
 			select {
 			case o, ok := <-output:
 				if !ok {
+					fjeoiwfjeofwijef
 					wait.Done()
 					return
 				}
