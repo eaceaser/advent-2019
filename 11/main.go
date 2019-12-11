@@ -64,6 +64,8 @@ type painter struct {
 	painted map[coord]bool
 	in      <-chan int
 	out     chan<- int
+	max     coord
+	min     coord
 }
 
 func mkPainter(mem []int) *painter {
@@ -90,7 +92,7 @@ func (p *painter) run() error {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		p.out <- ColorBlack
+		p.out <- ColorWhite
 		for {
 			i, ok := <-p.in
 			if !ok {
@@ -122,6 +124,20 @@ func (p *painter) paint(color int) {
 	if color == ColorWhite {
 		white = true
 	}
+
+	if p.pos.x > p.max.x {
+		p.max.x = p.pos.x
+	}
+	if p.pos.y > p.max.y {
+		p.max.y = p.pos.y
+	}
+	if p.pos.x < p.min.x {
+		p.min.x = p.pos.x
+	}
+	if p.pos.y < p.min.y {
+		p.min.y = p.pos.y
+	}
+
 	p.painted[p.pos] = white
 }
 
@@ -133,6 +149,27 @@ func (p *painter) move(dir int) {
 		p.heading = p.heading.right()
 	}
 	p.pos = p.pos.step(p.heading)
+}
+
+func (p *painter) print() {
+	for y := p.max.y; y >= p.min.y; y-- {
+		for x := p.min.x; x <= p.max.x; x++ {
+			cur := coord{x: x, y: y}
+			white, ok := p.painted[cur]
+			if !ok {
+				fmt.Print(" ")
+				continue
+			}
+
+			if white {
+				fmt.Print("#")
+			} else {
+				fmt.Print(".")
+			}
+		}
+		fmt.Print("\n")
+	}
+
 }
 
 func main() {
@@ -153,5 +190,5 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println(len(painter.painted))
+	painter.print()
 }
