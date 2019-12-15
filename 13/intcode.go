@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 )
 
@@ -19,15 +18,24 @@ const (
 	modePosition   = 0
 	modeImmediate  = 1
 	modeRelative   = 2
+
+	stateRunning computerState = 0
+	stateHalted  computerState = 1
+	stateInput   computerState = 2
+	stateOutput  computerState = 3
 )
 
+type computerState int
+
 type intcodeComputer struct {
-	name   string
-	mem    []int
-	ip     int
-	rel    int
-	input  <-chan int
-	output chan<- int
+	name  string
+	mem   []int
+	tp    *int
+	ip    int
+	rel   int
+	in    int
+	out   int
+	state computerState
 }
 
 func (c *intcodeComputer) jumpImpl(modes []int, cmp func(p int) bool) error {
@@ -36,8 +44,8 @@ func (c *intcodeComputer) jumpImpl(modes []int, cmp func(p int) bool) error {
 		return err
 	}
 
-	if cmp(params[0]) {
-		c.ip = params[1]
+	if cmp(*params[0]) {
+		c.ip = *params[1]
 	}
 
 	return nil
@@ -45,12 +53,11 @@ func (c *intcodeComputer) jumpImpl(modes []int, cmp func(p int) bool) error {
 
 func (c *intcodeComputer) inputImpl(modes []int) error {
 	modes = pad(modes, 1)
-	dest, err := c.outputMode(modes[0])
+	dest, err := c.modalParams(modes[0])
 	if err != nil {
 		return err
 	}
-	in := <-c.input
-	c.mem[dest] = in
+	c.tp = dest[0]
 	return nil
 }
 
@@ -59,21 +66,21 @@ func (c *intcodeComputer) outputImpl(modes []int) error {
 	if err != nil {
 		return err
 	}
-	c.output <- params[0]
+	c.out = *params[0]
 	return nil
 }
 
-func (c *intcodeComputer) modalParams(mode ...int) ([]int, error) {
-	rv := make([]int, len(mode))
+func (c *intcodeComputer) modalParams(mode ...int) ([]*int, error) {
+	rv := make([]*int, len(mode))
 	for i, t := range mode {
 		p := c.read()
 		switch t {
 		case modePosition:
-			rv[i] = c.mem[p]
+			rv[i] = &c.mem[p]
 		case modeImmediate:
-			rv[i] = p
+			rv[i] = &p
 		case modeRelative:
-			rv[i] = c.mem[c.rel+p]
+			rv[i] = &c.mem[c.rel+p]
 		default:
 			return nil, fmt.Errorf("unknown mode %d", t)
 		}
@@ -81,48 +88,27 @@ func (c *intcodeComputer) modalParams(mode ...int) ([]int, error) {
 	return rv, nil
 }
 
-func (c *intcodeComputer) outputMode(mode int) (int, error) {
-	p := c.read()
-	switch mode {
-	case modePosition:
-		return p, nil
-	case modeImmediate:
-		return 0, errors.New("output param mode cannot be immediate")
-	case modeRelative:
-		return p + c.rel, nil
-	default:
-		return 0, fmt.Errorf("unknown mode %d", mode)
-	}
-}
-
 func (c *intcodeComputer) arithmeticImpl(parsedModes []int, f func(a, b int) int) error {
 	modes := pad(parsedModes, 3)
-	params, err := c.modalParams(modes[0:2]...)
+	params, err := c.modalParams(modes...)
 	if err != nil {
 		return err
 	}
-	dest, err := c.outputMode(modes[2])
-	if err != nil {
-		return err
-	}
-	c.mem[dest] = f(params[0], params[1])
+	*params[2] = f(*params[0], *params[1])
 	return nil
 }
 
 func (c *intcodeComputer) cmpImpl(parsedModes []int, f func(a, b int) bool) error {
 	modes := pad(parsedModes, 3)
-	params, err := c.modalParams(modes[0:2]...)
+	params, err := c.modalParams(modes...)
 	if err != nil {
 		return err
 	}
-	dest, err := c.outputMode(modes[2])
-	if err != nil {
-		return err
-	}
-	if f(params[0], params[1]) {
-		c.mem[dest] = 1
+	dest := params[2]
+	if f(*params[0], *params[1]) {
+		*dest = 1
 	} else {
-		c.mem[dest] = 0
+		*dest = 0
 	}
 	return nil
 }
@@ -133,11 +119,12 @@ func (c *intcodeComputer) relImpl(parsedModes []int) error {
 	if err != nil {
 		return err
 	}
-	c.rel += params[0]
+	c.rel += *params[0]
 	return nil
 }
 
-func (c *intcodeComputer) Run() error {
+func (c *intcodeComputer) runLoop() (computerState, error) {
+	c.state = stateRunning
 	for {
 		cmdDesc := c.read()
 		opcode, parsedModes := parseOpcode(cmdDesc)
@@ -145,52 +132,86 @@ func (c *intcodeComputer) Run() error {
 		switch opcode {
 		case opcodeAdd:
 			if err := c.arithmeticImpl(parsedModes, addOp); err != nil {
-				return err
+				return 0, err
 			}
 		case opcodeMultiply:
 			if err := c.arithmeticImpl(parsedModes, multOp); err != nil {
-				return err
+				return 0, err
 			}
 		case opcodeInput:
 			if err := c.inputImpl(parsedModes); err != nil {
-				return err
+				return 0, err
 			}
+			c.state = stateInput
+			return stateInput, nil
 		case opcodeOutput:
 			if err := c.outputImpl(parsedModes); err != nil {
-				return err
+				return 0, err
 			}
+			c.state = stateOutput
+			return stateOutput, nil
 		case opcodeJmpIfT:
 			if err := c.jumpImpl(parsedModes, trueCmp); err != nil {
-				return err
+				return 0, err
 			}
 		case opcodeJmpIfF:
 			if err := c.jumpImpl(parsedModes, falseCmp); err != nil {
-				return err
+				return 0, err
 			}
 		case opcodeLT:
 			if err := c.cmpImpl(parsedModes, ltCmp); err != nil {
-				return err
+				return 0, err
 			}
 		case opcodeEql:
 			if err := c.cmpImpl(parsedModes, eqCmp); err != nil {
-				return err
+				return 0, err
 			}
 		case opcodeRelAdj:
 			if err := c.relImpl(parsedModes); err != nil {
-				return err
+				return 0, err
 			}
 		case opcodeDie:
-			close(c.output)
-			return nil
+			c.state = stateHalted
+			return stateHalted, nil
 		default:
-			return fmt.Errorf("illegal opcode %d", opcode)
+			return 0, fmt.Errorf("illegal opcode %d", opcode)
 		}
+	}
+}
+
+func (c *intcodeComputer) Run() (computerState, error) {
+	switch c.state {
+	case stateRunning:
+		return c.runLoop()
+	case stateInput:
+		*c.tp = c.in
+		return c.runLoop()
+	case stateOutput:
+		return c.runLoop()
+	default:
+		return c.state, fmt.Errorf("invalid state")
 	}
 }
 
 func (c *intcodeComputer) read() int {
 	rv := c.mem[c.ip]
 	c.ip++
+	return rv
+}
+
+func (c *intcodeComputer) copy() *intcodeComputer {
+	newMem := make([]int, len(c.mem))
+	copy(newMem, c.mem)
+	rv := &intcodeComputer{
+		name:  c.name,
+		mem:   newMem,
+		tp:    c.tp,
+		ip:    c.ip,
+		rel:   c.rel,
+		in:    c.in,
+		out:   c.out,
+		state: c.state,
+	}
 	return rv
 }
 

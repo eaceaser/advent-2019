@@ -3,27 +3,29 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
-	"sort"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
+	"time"
 )
 
 const (
-	MemSize = 1024 * 16
+	MemSize   = 1024 * 16
+	PauseTime = 250 * time.Millisecond
 
-	TypeEmpty tileType = iota - 1
-	TileWall
-	TileBlock
-	TilePaddle
-	TileBall
+	TileEmpty  tileType = 0
+	TileWall   tileType = 1
+	TileBlock  tileType = 2
+	TilePaddle tileType = 3
+	TileBall   tileType = 4
 )
 
 type tileType int
 
 func (t tileType) String() string {
 	switch t {
-	case TypeEmpty:
+	case TileEmpty:
 		return "."
 	case TileWall:
 		return "-"
@@ -37,108 +39,153 @@ func (t tileType) String() string {
 	panic(fmt.Sprintf("unknown tile type %d\n", t))
 }
 
-type tile struct {
-	x int
-	y int
-	t tileType
+type game struct {
+	c     *intcodeComputer
+	t     int
+	state int
 }
 
-type screen struct {
-	c  *intcodeComputer
-	s  []tile
-	in <-chan int
-}
+var saves []intcodeComputer
 
-func (s *screen) draw() int {
-	rv := 0
-	xcur := 0
-	ycur := 0
-	for _, t := range s.s {
-		for y := ycur; y < t.y; y++ {
-			fmt.Print("\n")
-		}
-		for x := xcur; x < t.x; x++ {
-			fmt.Print(" ")
-		}
-		if t.t == TileBlock {
-			rv++
-		}
-		fmt.Print(t.t.String())
-		xcur = t.x
-		ycur = t.y
+func (g *game) awaitOutput() (int, error) {
+	s, err := g.c.Run()
+	if err != nil {
+		return 0, err
 	}
-	fmt.Println()
-	return rv
+	if s != stateOutput {
+		return 0, fmt.Errorf("awaiting output state, got state %d", s)
+	}
+	return g.c.out, nil
 }
 
-func (s *screen) run() {
-	wait := sync.WaitGroup{}
-	wait.Add(1)
-	go func() {
-		for {
-			x, ok := <-s.in
-			if !ok {
-				wait.Done()
-				return
+func (g *game) run() error {
+	ymax := 0
+
+	for {
+		cs, err := g.c.Run()
+		if err != nil {
+			return err
+		}
+
+		switch cs {
+		case stateOutput:
+			x := g.c.out
+			y, err := g.awaitOutput()
+			if err != nil {
+				return err
 			}
-			y, ok := <-s.in
-			if !ok {
-				wait.Done()
-				return
-			}
-			t, ok := <-s.in
-			if !ok {
-				wait.Done()
-				return
+			t, err := g.awaitOutput()
+			if err != nil {
+				return err
 			}
 
-			n := sort.Search(len(s.s), func(i int) bool {
-				el := s.s[i]
-				if y > el.y {
-					return false
-				} else if y == el.y {
-					return x < el.x
+			tt := tileType(t)
+			if y > ymax {
+				ymax = y
+			}
+			write(x, y, tt.String())
+
+		case stateInput:
+			goto Running
+		case stateHalted:
+			return fmt.Errorf("intcode halted during setup")
+		}
+	}
+
+Running:
+	g.c.in = -1
+	steps := 0
+	for {
+		write(0, ymax+1, fmt.Sprintf("t=%d\n", steps))
+		cs, err := g.c.Run()
+		if err != nil {
+			return err
+		}
+
+		switch cs {
+		case stateOutput:
+			x := g.c.out
+			y, err := g.awaitOutput()
+			if err != nil {
+				return err
+			}
+			t, err := g.awaitOutput()
+			if err != nil {
+				return err
+			}
+
+			if x == -1 && y == 0 && t != 0 {
+				write(0, ymax+2, fmt.Sprintf("s=%d\n", t))
+				continue
+			}
+
+			tt := tileType(t)
+			write(x, y, tt.String())
+		case stateInput:
+			var b [3]byte
+			for {
+				os.Stdin.Read(b[:])
+				//if true {
+				if b == [3]byte{27, 91, 67} {
+					g.c.in = 1
+					break
+				} else if b == [3]byte{27, 91, 68} {
+					g.c.in = -1
+					break
+				} else if b == [3]byte{32, 0, 0} {
+					g.c.in = 0
+					break
+				} else if b == [3]byte{98, 0, 0} {
+					if len(saves) > 0 {
+						save := saves[0]
+						g.c = &save
+						steps--
+						break
+					}
 				} else {
-					return true
+					write(0, ymax+3, fmt.Sprint("I got the byte", b, "("+string(b[:])+")"))
 				}
-			})
-
-			tile := tile{
-				x: x,
-				y: y,
-				t: tileType(t),
 			}
-			origS := s.s
-			s.s = append(origS[0:n], tile)
-			if n < len(origS) {
-				s.s = append(s.s, origS[n:]...)
-			}
+			save := g.c.copy()
+			saves = append([]intcodeComputer{*save}, saves...)
+			steps++
+		case stateHalted:
+			goto Done
 		}
-	}()
-
-	if err := s.c.Run(); err != nil {
-		panic(err)
 	}
-
-	wait.Wait()
+Done:
+	save := saves[len(saves)-10]
+	saves = saves[10:]
+	g.c = &save
+	steps -= 10
+	goto Running
+	//return nil
 }
 
-func mkScreen(mem []int) *screen {
-	comm := make(chan int)
-
+func mkGame(mem []int) *game {
 	c := &intcodeComputer{
-		name:   "screen",
-		mem:    mem,
-		output: comm,
+		name: "game",
+		mem:  mem,
 	}
 
-	return &screen{
-		c:  c,
-		in: comm,
+	return &game{
+		c: c,
 	}
+}
+
+func moveCursor(x int, y int) {
+	fmt.Printf("\033[%d;%dH", y+1, x+1)
 }
 
 func main() {
+	fmt.Print("\033[H\033[2J")
+	// disable input buffering
+	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+	// do not display entered characters on the screen
+	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+	// restore the echoing state when exiting
+	defer exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+
 	memS, err := ioutil.ReadFile("input")
 	if err != nil {
 		panic(err)
@@ -151,8 +198,21 @@ func main() {
 		}
 	}
 
-	s := mkScreen(mem)
-	s.run()
-	ans := s.draw()
-	fmt.Printf("drew %d blocks\n", ans)
+	mem[0] = 2
+	s := mkGame(mem)
+	if err := s.run(); err != nil {
+		panic(err)
+	}
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -1 * x
+	}
+	return x
+}
+
+func write(x int, y int, s string) {
+	moveCursor(x, y)
+	fmt.Print(s)
 }
