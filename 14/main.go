@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -12,6 +13,8 @@ import (
 const (
 	Ore  = "ORE"
 	Fuel = "FUEL"
+
+	MaxOre = 1000000000000
 )
 
 var pattern = regexp.MustCompile("(\\d+) (\\w+)")
@@ -36,10 +39,40 @@ func (s spell) Ore() int {
 type plan struct {
 	inventory map[string]int
 	ore       int
-	log       []string
+}
+
+func (p *plan) Save() string {
+	var pairs []string
+	for k, v := range p.inventory {
+		pairs = append(pairs, fmt.Sprintf("%s:%d", k, v))
+	}
+
+	ss := sort.StringSlice(pairs)
+	ss.Sort()
+	return strings.Join(pairs, " ")
+}
+
+func (p *plan) Load(saved string) {
+	rv := make(map[string]int, len(p.inventory))
+	reagents := strings.Split(saved, " ")
+	for _, r := range reagents {
+		p2 := strings.SplitN(r, ":", 2)
+		name := p2[0]
+		amnt, err := strconv.Atoi(p2[1])
+		if err != nil {
+			panic(err)
+		}
+		rv[name] = amnt
+	}
+	p.inventory = rv
 }
 
 func calc(spellbook []spell) int {
+	type fuelMemoed struct {
+		fuel int
+		ore  int
+	}
+
 	spellGraph := map[string][]spell{}
 	for _, s := range spellbook {
 		s1 := s
@@ -59,7 +92,6 @@ func calc(spellbook []spell) int {
 				reagentSpell := spellGraph[ir.name][0]
 				needed := ir.quantity - onHand
 				for needed > 0 {
-					plan.log = append(plan.log, reagentSpell.output.name)
 					f(reagentSpell, plan)
 					plan.inventory[reagentSpell.output.name] += reagentSpell.output.quantity
 					needed -= reagentSpell.output.quantity
@@ -75,8 +107,33 @@ func calc(spellbook []spell) int {
 	}
 
 	fuelSpell := spellGraph[Fuel][0]
-	f(fuelSpell, &p)
-	return p.ore
+	fuel := 0
+	fuelMemo := map[string]fuelMemoed{}
+	for p.ore < MaxOre {
+		str := p.Save()
+		if o, ok := fuelMemo[str]; ok {
+			diff := p.ore - o.ore
+			if MaxOre-p.ore < diff {
+				goto Fallback
+			}
+			p.ore += diff
+			fd := fuel - o.fuel
+			fuel += fd
+			continue
+		}
+	Fallback:
+		fuelMemo[str] = fuelMemoed{
+			fuel: fuel,
+			ore:  p.ore,
+		}
+		if fuel%5000 == 0 {
+			fmt.Printf("f=%d o=%d p=%f\n", fuel, p.ore, 100*float64(p.ore)/MaxOre)
+
+		}
+		f(fuelSpell, &p)
+		fuel++
+	}
+	return fuel - 1
 }
 
 func mustParseReagent(s string) reagent {
@@ -126,5 +183,5 @@ func main() {
 		spellbook = append(spellbook, s)
 	}
 	cost := calc(spellbook)
-	fmt.Printf("calculated %d ore\n", cost)
+	fmt.Printf("calculated %d fuel\n", cost)
 }
