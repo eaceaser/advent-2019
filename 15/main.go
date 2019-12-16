@@ -28,6 +28,7 @@ const (
 	modeManual    = 0
 	modeSearching = 1
 	modePathfind  = 2
+	modeOxygen    = 3
 )
 
 type droid struct {
@@ -62,6 +63,41 @@ func (d *droid) nextOrientation(orientation int, tried map[int]struct{}) int {
 	}
 
 	return 0
+}
+
+func (d *droid) oxygen() int {
+	d.world[d.pos] = charSpace
+	total := 0
+	for _, n := range d.world {
+		if n == charSpace {
+			total++
+		}
+	}
+	steps := 0
+	seen := make([]bool, len(d.world))
+	filled := []int{d.target}
+	seen[d.target] = true
+	for len(filled) < total {
+		for _, node := range filled {
+			x, y := coord(node)
+			n := pos(move(x, y, cmdNorth))
+			s := pos(move(x, y, cmdSouth))
+			e := pos(move(x, y, cmdEast))
+			w := pos(move(x, y, cmdWest))
+			for _, tgt := range []int{n, s, e, w} {
+				if d.world[tgt] == charSpace {
+					if seen[tgt] {
+						continue
+					}
+					filled = append(filled, tgt)
+					seen[tgt] = true
+				}
+			}
+		}
+		steps++
+	}
+
+	return steps
 }
 
 func (d *droid) pathfind() int {
@@ -117,7 +153,7 @@ func (d *droid) run() error {
 			case modeSearching:
 				next := d.nextOrientation(orientation, map[int]struct{}{})
 				if next == 0 || (d.pos == orig && d.steps > 0) {
-					d.mode = modePathfind
+					d.mode = modeOxygen
 					d.c.in = cmdNorth
 					continue
 				}
@@ -126,6 +162,10 @@ func (d *droid) run() error {
 			case modePathfind:
 				dist := d.pathfind()
 				write(0, StatusRow+1, fmt.Sprintf("PATH: %d\n", dist))
+				return nil
+			case modeOxygen:
+				steps := d.oxygen()
+				write(0, StatusRow+1, fmt.Sprintf("OXYGEN TIME: %d\n", steps))
 				return nil
 			}
 		case stateOutput:
